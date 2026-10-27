@@ -33,7 +33,7 @@ const DEFAULT_CATEGORIES = [
 
 const DEFAULT_CONFIG = {
   roundCount: 5,
-  timerSeconds: 60,
+  timerSeconds: 120,
   letters: [...ARABIC_LETTERS],
   categories: [...DEFAULT_CATEGORIES]
 };
