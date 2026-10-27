@@ -1,0 +1,7 @@
+services:
+  abjad-game:
+    build: .
+    container_name: abjad-game
+    restart: unless-stopped
+    ports:
+      - "3000:3000"

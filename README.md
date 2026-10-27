@@ -19,11 +19,29 @@ npm start
 # → http://localhost:3000
 ```
 
+## Run with Docker Compose
+
+Run the game using Docker Compose with detached mode (`-d`) to keep it running in the background:
+
+```bash
+# Start container in detached mode (background)
+docker compose up -d --build
+
+# View container logs
+docker compose logs -f
+
+# Stop container
+docker compose down
+```
+
+> [!NOTE]
+> The `-d` (or `--detach`) flag runs the container in the background and frees up your terminal prompt.
+
 ## Run with Docker
 
 ```bash
 docker build -t abjad-game .
-docker run -p 3000:3000 abjad-game
+docker run -d -p 3000:3000 --name abjad-game abjad-game
 # → http://localhost:3000
 ```
 
@@ -31,5 +49,5 @@ docker run -p 3000:3000 abjad-game
 
 ```bash
 docker pull ghcr.io/omarqurashi868/abjadgame:latest
-docker run -p 3000:3000 ghcr.io/omarqurashi868/abjadgame:latest
+docker run -d -p 3000:3000 --name abjad-game ghcr.io/omarqurashi868/abjadgame:latest
 ```
