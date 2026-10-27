@@ -1,6 +1,6 @@
 services:
   abjad-game:
-    build: .
+    image: ghcr.io/omarqurashi868/abjadgame
     container_name: abjad-game
     restart: unless-stopped
     ports:

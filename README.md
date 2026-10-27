@@ -21,11 +21,11 @@ npm start
 
 ## Run with Docker Compose
 
-Run the game using Docker Compose with detached mode (`-d`) to keep it running in the background:
+Run the game using Docker Compose with detached mode (`-d`) to keep it running in the background (supports both `amd64` and `arm64`):
 
 ```bash
-# Start container in detached mode (background)
-docker compose up -d --build
+# Pull image and start in detached mode (background)
+docker compose up -d
 
 # View container logs
 docker compose logs -f
