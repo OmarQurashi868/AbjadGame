@@ -383,7 +383,36 @@ h3 { font-size: 1.25rem; font-weight: 600; }
   margin-bottom: 1.5rem;
 }
 
-.room-code-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+.room-code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.room-code-label { font-size: 0.85rem; color: var(--text-muted); }
+
+.lobby-expiry-badge {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-full);
+  padding: 0.2rem 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.lobby-expiry-badge.urgent {
+  color: var(--invalid);
+  border-color: var(--invalid);
+  background: rgba(239, 68, 68, 0.1);
+  animation: pulse 1.5s infinite;
+}
 
 .room-code-display {
   display: flex;
@@ -401,15 +430,23 @@ h3 { font-size: 1.25rem; font-weight: 600; }
   background: var(--bg-card);
   border: 2px solid var(--border-light);
   border-radius: var(--radius-sm);
-  padding: 0.35rem 1rem;
+  padding: 0.35rem 0.75rem 0.35rem calc(0.75rem + 0.35em);
   text-align: center;
+  direction: ltr !important;
+  unicode-bidi: isolate;
   cursor: default;
   user-select: all;
   width: auto;
   min-width: 0;
   flex: 1;
-  max-width: 240px;
+  max-width: 250px;
   outline: none;
+  box-sizing: border-box;
+}
+
+[dir="rtl"] .room-code-input {
+  direction: ltr !important;
+  text-align: center !important;
 }
 
 .room-code-actions { display: flex; gap: 0.5rem; }
@@ -473,14 +510,24 @@ h3 { font-size: 1.25rem; font-weight: 600; }
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
   margin-bottom: 1.25rem;
+  align-items: end;
+}
+
+.config-panel .config-field {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .config-panel .config-field label {
-  display: block;
+  display: flex;
+  align-items: flex-end;
+  min-height: 2.4em;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-muted);
   margin-bottom: 0.4rem;
+  line-height: 1.25;
 }
 
 .config-panel input[type=number] {
@@ -639,6 +686,15 @@ h3 { font-size: 1.25rem; font-weight: 600; }
   box-shadow: 0 6px 24px rgba(245,158,11,0.5);
   transition: all var(--transition);
   letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  direction: ltr !important;
+  unicode-bidi: isolate;
+}
+.stop-btn .stop-text {
+  direction: ltr !important;
+  unicode-bidi: isolate;
 }
 .stop-btn:hover:not(:disabled) {
   transform: translateY(-3px) scale(1.03);
@@ -940,6 +996,73 @@ h3 { font-size: 1.25rem; font-weight: 600; }
 }
 .stop-banner h2 { font-size: 3rem; color: var(--accent); margin-bottom: 0.5rem; }
 .stop-banner p { color: var(--text-muted); font-size: 1.1rem; }
+
+/* ---------- Modal Dialog ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 15, 29, 0.8);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  animation: fadeIn 0.25s ease;
+}
+
+.modal-card {
+  background: var(--surface);
+  border: 2px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 2rem 2.25rem;
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  box-shadow: var(--shadow-lg), 0 0 30px rgba(0,0,0,0.4);
+  animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin-bottom: 0.75rem;
+  color: var(--text);
+}
+
+.modal-msg {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  margin-bottom: 1.5rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Return to Lobby Banner */
+.return-lobby-banner {
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1.25rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.return-lobby-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
 
 /* ---------- Scrollbar ---------- */
 ::-webkit-scrollbar { width: 6px; }

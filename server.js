@@ -28,7 +28,7 @@ const ARABIC_LETTERS = [
 ];
 
 const DEFAULT_CATEGORIES = [
-  'ولد','بنت','حيوان','جماد','نبات','دولة','وجبة','مشهور','لعبة','وسائط'
+  'ولد','بنت','حيوان','جماد','نبات','بلاد','وجبة','مشهور','لعبة','وسائط'
 ];
 
 const DEFAULT_CONFIG = {
@@ -37,6 +37,9 @@ const DEFAULT_CONFIG = {
   letters: [...ARABIC_LETTERS],
   categories: [...DEFAULT_CATEGORIES]
 };
+
+const LOBBY_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes lobby inactivity timeout
+const EMPTY_ROOM_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes if all players disconnect
 
 function generateRoomId() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -75,6 +78,33 @@ function getPublicPlayers(room) {
   }));
 }
 
+function clearLobbyTimer(room) {
+  if (room && room.lobbyTimerHandle) {
+    clearTimeout(room.lobbyTimerHandle);
+    room.lobbyTimerHandle = null;
+  }
+}
+
+function resetLobbyTimer(room) {
+  clearLobbyTimer(room);
+  if (!room || room.state !== 'lobby') return;
+
+  room.expiresAt = Date.now() + LOBBY_INACTIVITY_TIMEOUT_MS;
+  room.lobbyTimerHandle = setTimeout(() => {
+    if (room.state === 'lobby') {
+      console.log(`Room ${room.id} expired due to inactivity`);
+      broadcast(room, {
+        type: 'roomExpired',
+        message: 'انتهت صلاحية الغرفة بسبب عدم النشاط'
+      });
+      clearLobbyTimer(room);
+      clearInterval(room.timerHandle);
+      clearInterval(room.votingTimerHandle);
+      rooms.delete(room.id);
+    }
+  }, LOBBY_INACTIVITY_TIMEOUT_MS);
+}
+
 function createRoom(ws, username) {
   let roomId;
   do {
@@ -104,6 +134,8 @@ function createRoom(ws, username) {
     totalScores: {}, // playerId -> cumulative
     timerHandle: null,
     votingTimerHandle: null,
+    lobbyTimerHandle: null,
+    expiresAt: null,
     currentCategoryIndex: 0,
     pendingVotes: new Set(), // playerIds who haven't submitted votes
     roundStoppedBy: null
@@ -111,6 +143,7 @@ function createRoom(ws, username) {
 
   rooms.set(roomId, room);
   clients.set(ws, { playerId, roomId, username });
+  resetLobbyTimer(room);
 
   sendToPlayer(ws, { type: 'roomCreated', roomId });
   sendToPlayer(ws, {
@@ -119,7 +152,8 @@ function createRoom(ws, username) {
     players: getPublicPlayers(room),
     config: room.config,
     isHost: true,
-    playerId
+    playerId,
+    expiresAt: room.expiresAt
   });
 
   console.log(`Room ${roomId} created by ${username}`);
@@ -129,7 +163,7 @@ function createRoom(ws, username) {
 function joinRoom(ws, roomId, username) {
   const room = rooms.get(roomId);
   if (!room) {
-    sendToPlayer(ws, { type: 'error', message: 'الغرفة غير موجودة' });
+    sendToPlayer(ws, { type: 'error', code: 'ROOM_NOT_FOUND', message: 'الغرفة غير موجودة' });
     return;
   }
 
@@ -137,6 +171,9 @@ function joinRoom(ws, roomId, username) {
     sendToPlayer(ws, { type: 'error', message: 'اللعبة بدأت بالفعل' });
     return;
   }
+
+  // Refresh inactivity timeout on activity
+  resetLobbyTimer(room);
 
   // Check if reconnecting
   const existing = room.players.find(p => p.username === username && !p.connected);
@@ -150,9 +187,10 @@ function joinRoom(ws, roomId, username) {
       players: getPublicPlayers(room),
       config: room.config,
       isHost: existing.id === room.hostId,
-      playerId: existing.id
+      playerId: existing.id,
+      expiresAt: room.expiresAt
     });
-    broadcast(room, { type: 'playerJoined', players: getPublicPlayers(room) }, ws);
+    broadcast(room, { type: 'playerJoined', players: getPublicPlayers(room), expiresAt: room.expiresAt }, ws);
     return;
   }
 
@@ -167,10 +205,11 @@ function joinRoom(ws, roomId, username) {
     players: getPublicPlayers(room),
     config: room.config,
     isHost: false,
-    playerId
+    playerId,
+    expiresAt: room.expiresAt
   });
 
-  broadcast(room, { type: 'playerJoined', players: getPublicPlayers(room) }, ws);
+  broadcast(room, { type: 'playerJoined', players: getPublicPlayers(room), expiresAt: room.expiresAt }, ws);
   console.log(`${username} joined room ${roomId}`);
 }
 
@@ -188,6 +227,8 @@ function startGame(ws) {
     return;
   }
   if (room.state !== 'lobby') return;
+
+  clearLobbyTimer(room);
 
   // Init scores
   room.players.forEach(p => {
@@ -504,11 +545,13 @@ function playAgain(ws) {
   room.votes = {};
   room.state = 'lobby';
   room.players.forEach(p => { room.totalScores[p.id] = 0; });
+  resetLobbyTimer(room);
 
   broadcast(room, {
     type: 'backToLobby',
     players: getPublicPlayers(room),
-    config: room.config
+    config: room.config,
+    expiresAt: room.expiresAt
   });
 }
 
@@ -528,7 +571,9 @@ function updateConfig(ws, config) {
     room.config.categories = config.categories.filter(c => c && c.trim()).slice(0, 20);
   }
 
-  broadcast(room, { type: 'configUpdated', config: room.config });
+  resetLobbyTimer(room);
+
+  broadcast(room, { type: 'configUpdated', config: room.config, expiresAt: room.expiresAt });
 }
 
 function handleDisconnect(ws) {
@@ -553,18 +598,19 @@ function handleDisconnect(ws) {
   const connectedPlayers = room.players.filter(p => p.connected);
 
   if (connectedPlayers.length === 0) {
-    // Clean up room after a delay
+    // Clean up room after an empty timeout
     setTimeout(() => {
       if (rooms.has(roomId)) {
         const r = rooms.get(roomId);
         if (r.players.filter(p => p.connected).length === 0) {
+          clearLobbyTimer(r);
           clearInterval(r.timerHandle);
           clearInterval(r.votingTimerHandle);
           rooms.delete(roomId);
           console.log(`Room ${roomId} deleted (empty)`);
         }
       }
-    }, 60000);
+    }, EMPTY_ROOM_TIMEOUT_MS);
     return;
   }
 

@@ -129,7 +129,7 @@ const ARABIC_LETTERS = [
 ];
 
 const DEFAULT_CATEGORIES = [
-  'ولد','بنت','حيوان','جماد','نبات','دولة','وجبة','مشهور','لعبة','وسائط'
+  'ولد','بنت','حيوان','جماد','نبات','بلاد','وجبة','مشهور','لعبة','وسائط'
 ];
 
 const PLAYER_COLORS = [
@@ -148,6 +148,8 @@ const state = {
   isHost: false,
   players: [],
   config: null,
+  expiresAt: null, // lobby expiration timestamp
+  lobbyExpiryTimer: null,
   currentScreen: 'landing', // landing | lobby | game | voting | roundEnd | gameEnd
   // Game
   round: 0,
@@ -172,6 +174,7 @@ const state = {
   // UI
   roundStopped: false,
   stopOverlayShown: false,
+  modalShown: false,
 };
 
 // ─── i18n helpers ────────────────────────────────────────────
@@ -229,6 +232,7 @@ function handleServerMessage(msg) {
       state.config = msg.config;
       state.isHost = msg.isHost;
       state.playerId = msg.playerId;
+      state.expiresAt = msg.expiresAt || null;
       state.currentScreen = 'lobby';
       render();
       // Update URL and push a history entry so back button works
@@ -239,6 +243,7 @@ function handleServerMessage(msg) {
 
     case 'playerJoined':
       state.players = msg.players;
+      state.expiresAt = msg.expiresAt || state.expiresAt;
       renderPlayerList();
       if (state.currentScreen === 'lobby') renderLobbyActions();
       break;
@@ -254,7 +259,17 @@ function handleServerMessage(msg) {
 
     case 'configUpdated':
       state.config = msg.config;
+      state.expiresAt = msg.expiresAt || state.expiresAt;
       if (state.currentScreen === 'lobby') renderConfigPanel();
+      break;
+
+    case 'roomExpired':
+      // Show modal and return to landing
+      showModal(
+        t('title'),
+        msg.message || 'انتهت صلاحية الغرفة بسبب عدم النشاط',
+        [{ label: t('createRoom'), onclick: 'hideModal(); goToLanding()', class: 'btn-accent' }]
+      );
       break;
 
     case 'gameStarted':
@@ -265,6 +280,7 @@ function handleServerMessage(msg) {
       state.answers = {};
       state.roundStopped = false;
       state.stopOverlayShown = false;
+      if (state.lobbyExpiryTimer) { clearInterval(state.lobbyExpiryTimer); state.lobbyExpiryTimer = null; }
       state.categories.forEach(c => { state.answers[c] = ''; });
       startClientTimer(msg.timerSeconds);
       state.currentScreen = 'game';
@@ -327,6 +343,7 @@ function handleServerMessage(msg) {
     case 'backToLobby':
       state.players = msg.players;
       state.config = msg.config;
+      state.expiresAt = msg.expiresAt || null;
       state.currentScreen = 'lobby';
       render();
       break;
@@ -337,7 +354,14 @@ function handleServerMessage(msg) {
       break;
 
     case 'error':
-      showToast(msg.message, 'error');
+      // Handle specific error codes
+      if (msg.code === 'ROOM_NOT_FOUND') {
+        showModal(t('title'), msg.message || 'الغرفة غير موجودة', [
+          { label: t('createRoom'), onclick: 'hideModal(); goToLanding()', class: 'btn-accent' }
+        ]);
+      } else {
+        showToast(msg.message, 'error');
+      }
       break;
   }
 }
@@ -405,6 +429,36 @@ function showToast(msg, type = 'info', duration = 3000) {
     toast.style.transition = 'opacity 0.4s';
     setTimeout(() => toast.remove(), 400);
   }, duration);
+}
+
+// ─── Modal Dialog ─────────────────────────────────────────────
+function showModal(title, message, actions = []) {
+  const existing = document.querySelector('.modal-overlay');
+  if (existing) existing.remove();
+
+  state.modalShown = true;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <h3 class="modal-title">${escHtml(title)}</h3>
+      <p class="modal-msg">${escHtml(message)}</p>
+      <div class="modal-actions">
+        ${actions.map(a => `<button class="btn ${a.class || 'btn-primary'}" onclick="${a.onclick}">${escHtml(a.label)}</button>`).join('')}
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Close on overlay click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) hideModal();
+  });
+}
+
+function hideModal() {
+  const overlay = document.querySelector('.modal-overlay');
+  if (overlay) overlay.remove();
+  state.modalShown = false;
 }
 
 // ─── Player color helper ──────────────────────────────────────
@@ -716,12 +770,30 @@ function doJoinByCode() {
 // ─── Screen: Lobby ────────────────────────────────────────────
 function renderLobby() {
   const link = `${location.origin}/lobby/${state.roomId}`;
+  // Lobby expiry badge
+  let expiryBadge = '';
+  if (state.expiresAt) {
+    const remaining = Math.max(0, Math.ceil((state.expiresAt - Date.now()) / 1000));
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    const urgent = remaining <= 60;
+    expiryBadge = `
+      <div class="room-code-header">
+        <div class="room-code-label">${t('roomCode')}</div>
+        <span class="lobby-expiry-badge${urgent ? ' urgent' : ''}">
+          ⏱ ${mins}:${secs.toString().padStart(2, '0')}
+        </span>
+      </div>`;
+  } else {
+    expiryBadge = `<div class="room-code-label">${t('roomCode')}</div>`;
+  }
+
   return `
     ${renderTopBar()}
     <div class="screen">
       <div class="room-code-box">
         <div>
-          <div class="room-code-label">${t('roomCode')}</div>
+          ${expiryBadge}
           <div class="room-code-display">
             <input class="room-code-input" type="text" value="${state.roomId}" readonly tabindex="-1" />
             <button class="btn btn-outline btn-sm" onclick="copyLink('${link}')">
@@ -751,6 +823,28 @@ function afterLobbyRender() {
   renderPlayerList();
   renderConfigPanel();
   renderLobbyActions();
+  startLobbyExpiryTimer();
+}
+
+function startLobbyExpiryTimer() {
+  if (state.lobbyExpiryTimer) clearInterval(state.lobbyExpiryTimer);
+  if (!state.expiresAt || state.currentScreen !== 'lobby') return;
+
+  state.lobbyExpiryTimer = setInterval(() => {
+    if (state.currentScreen !== 'lobby' || !state.expiresAt) {
+      clearInterval(state.lobbyExpiryTimer);
+      state.lobbyExpiryTimer = null;
+      return;
+    }
+    const remaining = Math.max(0, Math.ceil((state.expiresAt - Date.now()) / 1000));
+    const badge = document.querySelector('.lobby-expiry-badge');
+    if (badge) {
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      badge.textContent = `⏱ ${mins}:${secs.toString().padStart(2, '0')}`;
+      badge.classList.toggle('urgent', remaining <= 60);
+    }
+  }, 1000);
 }
 
 function copyLink(link) {
@@ -916,6 +1010,13 @@ function renderGameEnd() {
         <p class="text-muted mt-sm">${t('winner')}</p>
       </div>` : ''}
 
+      <div class="return-lobby-banner">
+        <div class="return-lobby-info">
+          <span>🏠</span>
+          <span>انتهت اللعبة — يمكن العودة للوبي</span>
+        </div>
+      </div>
+
       <div class="card">
         <h2 class="title-gradient mb-md">🎖 ${t('finalResults')}</h2>
         <ul class="ranking-list">${items}</ul>
@@ -939,14 +1040,18 @@ function goToLanding() {
   }
   // Clear timers
   if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval = null; }
+  if (state.lobbyExpiryTimer) { clearInterval(state.lobbyExpiryTimer); state.lobbyExpiryTimer = null; }
   // Reset relevant state
   state.playerId = null;
   state.roomId = null;
   state.isHost = false;
   state.players = [];
   state.config = null;
+  state.expiresAt = null;
+  state.lobbyExpiryTimer = null;
   state.roundStopped = false;
   state.stopOverlayShown = false;
+  state.modalShown = false;
   state.currentScreen = 'landing';
   history.replaceState({ screen: 'landing' }, '', '/');
   render();
