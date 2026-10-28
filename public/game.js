@@ -170,7 +170,12 @@ function playSfx(name) {
 function toggleSfxMute() {
   sfxMuted = !sfxMuted;
   localStorage.setItem('abjad_sfx_muted', sfxMuted);
-  renderTopBar();
+  // Update icon immediately without full re-render
+  const btn = document.querySelector('.sfx-toggle');
+  if (btn) {
+    btn.textContent = sfxMuted ? '🔇' : '🔊';
+    btn.title = sfxMuted ? 'Enable sound effects' : 'Disable sound effects';
+  }
 }
 
 // ─── State ───────────────────────────────────────────────────
@@ -200,6 +205,7 @@ const state = {
   localVotes: {}, // playerId -> bool
   votingCategory: '',
   votingTotalCategories: 0,
+  votesSubmitted: false,
   // Round end
   roundScores: null,
   totalScores: null,
@@ -212,6 +218,7 @@ const state = {
   modalShown: false,
   // Letter animation
   letterAnimActive: false,
+  letterAnimFadeIn: false,
 };
 
 // ─── i18n helpers ────────────────────────────────────────────
@@ -271,11 +278,34 @@ function handleServerMessage(msg) {
       state.isHost = msg.isHost;
       state.playerId = msg.playerId;
       state.expiresAt = msg.expiresAt || null;
-      state.currentScreen = 'lobby';
-      render();
-      // Update URL and push a history entry so back button works
-      if (!location.pathname.includes(msg.roomId)) {
-        history.pushState({ screen: 'lobby', roomId: msg.roomId }, '', `/lobby/${msg.roomId}`);
+
+      // Handle mid-game join
+      if (msg.gameState && msg.gameState !== 'lobby') {
+        // Game already in progress - restore state
+        state.currentScreen = msg.gameState;
+        state.round = msg.currentRound || 1;
+        state.totalRounds = msg.totalRounds || state.config?.roundCount || 0;
+        state.currentLetter = msg.currentLetter || '';
+        state.categories = msg.categories || state.config?.categories || [];
+        state.answers = {};
+        state.categories.forEach(c => { state.answers[c] = ''; });
+
+        // Start appropriate timer
+        if (msg.gameState === 'playing' || msg.gameState === 'game') {
+          startClientTimer(msg.timerSeconds || state.config?.timerSeconds || 120);
+        } else if (msg.gameState === 'voting') {
+          startClientTimer(30);
+        }
+
+        history.pushState({ screen: msg.gameState }, '', location.pathname);
+        render();
+      } else {
+        state.currentScreen = 'lobby';
+        render();
+        // Update URL and push a history entry so back button works
+        if (!location.pathname.includes(msg.roomId)) {
+          history.pushState({ screen: 'lobby', roomId: msg.roomId }, '', `/lobby/${msg.roomId}`);
+        }
       }
       playSfx('xylophone_chime_quick');
       break;
@@ -321,6 +351,7 @@ function handleServerMessage(msg) {
       state.roundStopped = false;
       state.stopOverlayShown = false;
       state.letterAnimActive = true;
+      state.letterAnimFadeIn = false;
       if (state.lobbyExpiryTimer) { clearInterval(state.lobbyExpiryTimer); state.lobbyExpiryTimer = null; }
       state.categories.forEach(c => { state.answers[c] = ''; });
       startClientTimer(msg.timerSeconds);
@@ -328,14 +359,24 @@ function handleServerMessage(msg) {
       history.pushState({ screen: 'game' }, '', location.pathname);
       render();
       playSfx('xylophone_mystery');
-      // Clear letter animation after animation completes
+      // Handle letter animation: show bounce, then fade in the static letter
       setTimeout(() => {
         const overlay = document.getElementById('letter-anim-overlay');
         if (overlay) {
           overlay.classList.add('fade-out');
-          setTimeout(() => { state.letterAnimActive = false; render(); }, 500);
+          // After overlay fades, trigger fade-in of static letter
+          setTimeout(() => {
+            state.letterAnimActive = false;
+            state.letterAnimFadeIn = true;
+            // Update just the letter display without full re-render
+            const letterEl = document.querySelector('.letter-display');
+            if (letterEl) {
+              letterEl.classList.add('fade-in');
+            }
+          }, 500);
         } else {
-          state.letterAnimActive = false; render();
+          state.letterAnimActive = false;
+          state.letterAnimFadeIn = true;
         }
       }, 1800);
       break;
@@ -364,6 +405,7 @@ function handleServerMessage(msg) {
       state.votingAnswers = msg.answers;
       state.votingTotalCategories = state.categories.length;
       state.localVotes = {};
+      state.votesSubmitted = false;
       // Initialize local votes from prevalidation
       msg.answers.forEach(a => { state.localVotes[a.playerId] = a.valid; });
       startClientTimer(30);
@@ -372,7 +414,12 @@ function handleServerMessage(msg) {
       break;
 
     case 'votingResult':
-      // Show results briefly; next votingPhase or roundEnd will follow
+      // Show score animations for each player
+      if (msg.results) {
+        showScoreAnimations(msg.results);
+      }
+      // Reset votesSubmitted for next category
+      state.votesSubmitted = false;
       break;
 
     case 'roundEnd':
@@ -698,9 +745,11 @@ function doSubmitVotes() {
     categoryIndex: state.currentVotingCategory,
     votes: state.localVotes
   });
-  // Disable button
+  // Disable button and prevent further vote changes
+  state.votesSubmitted = true;
   const btn = document.getElementById('submit-votes-btn');
   if (btn) btn.disabled = true;
+  renderVoteCards();
 }
 
 function toggleVote(playerId) {
@@ -724,13 +773,37 @@ function renderVoteCards() {
     const isEmpty = !a.answer || !a.answer.trim();
     const voteState = isEmpty ? 'empty' : (state.localVotes[a.playerId] ? 'valid' : 'invalid');
     const icon = isEmpty ? '—' : (state.localVotes[a.playerId] ? '✅' : '❌');
+    const submittedClass = state.votesSubmitted ? ' submitted' : '';
+    const onclick = (isEmpty || state.votesSubmitted) ? '' : `toggleVote('${a.playerId}')`;
     return `
-      <div class="vote-card ${voteState}" onclick="${isEmpty ? '' : `toggleVote('${a.playerId}')`}">
+      <div class="vote-card ${voteState}${submittedClass}" onclick="${onclick}" data-player-id="${a.playerId}">
         <div class="vote-player-name">${escHtml(a.username)}</div>
         <div class="vote-answer">${escHtml(a.answer || t('noAnswer'))}</div>
         <div class="vote-status-icon">${icon}</div>
       </div>`;
   }).join('');
+}
+
+function showScoreAnimations(results) {
+  const container = document.getElementById('vote-cards-container');
+  if (!container) return;
+
+  Object.entries(results).forEach(([playerId, data]) => {
+    const card = container.querySelector(`[data-player-id="${playerId}"]`);
+    if (!card) return;
+
+    const isValid = data.valid === true;
+    const score = isValid ? 10 : 5;
+    const color = isValid ? 'var(--valid)' : 'var(--accent)';
+
+    const popup = document.createElement('div');
+    popup.className = 'score-popup';
+    popup.textContent = `+${score}`;
+    popup.style.color = color;
+    card.appendChild(popup);
+
+    setTimeout(() => popup.remove(), 1000);
+  });
 }
 
 // ─── Main render ──────────────────────────────────────────────

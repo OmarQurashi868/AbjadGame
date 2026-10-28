@@ -167,11 +167,6 @@ function joinRoom(ws, roomId, username) {
     return;
   }
 
-  if (room.state !== 'lobby') {
-    sendToPlayer(ws, { type: 'error', message: 'اللعبة بدأت بالفعل' });
-    return;
-  }
-
   // Refresh inactivity timeout on activity
   resetLobbyTimer(room);
 
@@ -194,6 +189,35 @@ function joinRoom(ws, roomId, username) {
     return;
   }
 
+  // If game already started, add as spectator/late joiner
+  if (room.state !== 'lobby') {
+    const playerId = generatePlayerId();
+    const player = { id: playerId, username, ws, connected: true, isSpectator: true };
+    room.players.push(player);
+    clients.set(ws, { playerId, roomId, username });
+
+    // Send current game state
+    sendToPlayer(ws, {
+      type: 'roomJoined',
+      roomId,
+      players: getPublicPlayers(room),
+      config: room.config,
+      isHost: false,
+      playerId,
+      expiresAt: room.expiresAt,
+      gameState: room.state,
+      currentRound: room.round,
+      totalRounds: room.config.roundCount,
+      currentLetter: room.currentLetter,
+      categories: room.config.categories
+    });
+
+    broadcast(room, { type: 'playerJoined', players: getPublicPlayers(room), expiresAt: room.expiresAt }, ws);
+    console.log(`${username} joined room ${roomId} mid-game as spectator`);
+    return;
+  }
+
+  // Normal lobby join
   const playerId = generatePlayerId();
   const player = { id: playerId, username, ws, connected: true };
   room.players.push(player);
