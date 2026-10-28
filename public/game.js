@@ -138,6 +138,41 @@ const PLAYER_COLORS = [
   '#a78bfa','#34d399','#fb923c','#38bdf8'
 ];
 
+// ─── Sound Manager ────────────────────────────────────────────
+const SFX_VOLUME = 0.3;
+const sfxCache = {};
+let sfxMuted = localStorage.getItem('abjad_sfx_muted') === 'true';
+
+function preloadSfx() {
+  const files = [
+    'xylophone_chime_quick',
+    'xylophone_mystery',
+    'xylophone_negative',
+    'xylophone_positive_long'
+  ];
+  files.forEach(name => {
+    const audio = new Audio(`/sfx/${name}.wav`);
+    audio.volume = SFX_VOLUME;
+    audio.preload = 'auto';
+    sfxCache[name] = audio;
+  });
+}
+
+function playSfx(name) {
+  if (sfxMuted) return;
+  const audio = sfxCache[name];
+  if (audio) {
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  }
+}
+
+function toggleSfxMute() {
+  sfxMuted = !sfxMuted;
+  localStorage.setItem('abjad_sfx_muted', sfxMuted);
+  renderTopBar();
+}
+
 // ─── State ───────────────────────────────────────────────────
 const state = {
   lang: 'ar',
@@ -175,6 +210,8 @@ const state = {
   roundStopped: false,
   stopOverlayShown: false,
   modalShown: false,
+  // Letter animation
+  letterAnimActive: false,
 };
 
 // ─── i18n helpers ────────────────────────────────────────────
@@ -223,6 +260,7 @@ function handleServerMessage(msg) {
   switch (msg.type) {
     case 'roomCreated':
       state.roomId = msg.roomId;
+      playSfx('xylophone_chime_quick');
       // roomJoined follows immediately
       break;
 
@@ -239,6 +277,7 @@ function handleServerMessage(msg) {
       if (!location.pathname.includes(msg.roomId)) {
         history.pushState({ screen: 'lobby', roomId: msg.roomId }, '', `/lobby/${msg.roomId}`);
       }
+      playSfx('xylophone_chime_quick');
       break;
 
     case 'playerJoined':
@@ -246,6 +285,7 @@ function handleServerMessage(msg) {
       state.expiresAt = msg.expiresAt || state.expiresAt;
       renderPlayerList();
       if (state.currentScreen === 'lobby') renderLobbyActions();
+      playSfx('xylophone_chime_quick');
       break;
 
     case 'playerLeft':
@@ -280,12 +320,24 @@ function handleServerMessage(msg) {
       state.answers = {};
       state.roundStopped = false;
       state.stopOverlayShown = false;
+      state.letterAnimActive = true;
       if (state.lobbyExpiryTimer) { clearInterval(state.lobbyExpiryTimer); state.lobbyExpiryTimer = null; }
       state.categories.forEach(c => { state.answers[c] = ''; });
       startClientTimer(msg.timerSeconds);
       state.currentScreen = 'game';
       history.pushState({ screen: 'game' }, '', location.pathname);
       render();
+      playSfx('xylophone_mystery');
+      // Clear letter animation after animation completes
+      setTimeout(() => {
+        const overlay = document.getElementById('letter-anim-overlay');
+        if (overlay) {
+          overlay.classList.add('fade-out');
+          setTimeout(() => { state.letterAnimActive = false; render(); }, 500);
+        } else {
+          state.letterAnimActive = false; render();
+        }
+      }, 1800);
       break;
 
     case 'roundStopped': {
@@ -301,6 +353,7 @@ function handleServerMessage(msg) {
       document.querySelector('.stop-btn')?.setAttribute('disabled', '');
       // Submit current answers
       wsSend({ type: 'submitAnswers', answers: state.answers });
+      playSfx('xylophone_negative');
       break;
     }
 
@@ -338,6 +391,7 @@ function handleServerMessage(msg) {
       state.ranking = msg.ranking;
       state.currentScreen = 'gameEnd';
       render();
+      playSfx('xylophone_positive_long');
       break;
 
     case 'backToLobby':
@@ -474,8 +528,13 @@ function playerInitial(name) {
 function renderTopBar() {
   return `
     <div class="top-bar">
-      <span class="logo">${t('title')}</span>
-      <button class="lang-toggle" onclick="toggleLang()">${t('langToggle')}</button>
+      <span class="logo" onclick="goToLanding()" style="cursor:pointer">${t('title')}</span>
+      <div class="top-bar-actions">
+        <button class="lang-toggle" onclick="toggleLang()">${t('langToggle')}</button>
+        <button class="lang-toggle sfx-toggle" onclick="toggleSfxMute()" title="${sfxMuted ? 'Enable sound effects' : 'Disable sound effects'}">
+          ${sfxMuted ? '🔇' : '🔊'}
+        </button>
+      </div>
     </div>`;
 }
 
@@ -770,46 +829,31 @@ function doJoinByCode() {
 // ─── Screen: Lobby ────────────────────────────────────────────
 function renderLobby() {
   const link = `${location.origin}/lobby/${state.roomId}`;
-  // Lobby expiry badge
-  let expiryBadge = '';
-  if (state.expiresAt) {
-    const remaining = Math.max(0, Math.ceil((state.expiresAt - Date.now()) / 1000));
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-    const urgent = remaining <= 60;
-    expiryBadge = `
-      <div class="room-code-header">
-        <div class="room-code-label">${t('roomCode')}</div>
-        <span class="lobby-expiry-badge${urgent ? ' urgent' : ''}">
-          ⏱ ${mins}:${secs.toString().padStart(2, '0')}
-        </span>
-      </div>`;
-  } else {
-    expiryBadge = `<div class="room-code-label">${t('roomCode')}</div>`;
-  }
 
   return `
     ${renderTopBar()}
     <div class="screen">
-      <div class="room-code-box">
-        <div>
-          ${expiryBadge}
-          <div class="room-code-display">
-            <input class="room-code-input" type="text" value="${state.roomId}" readonly tabindex="-1" />
-            <button class="btn btn-outline btn-sm" onclick="copyLink('${link}')">
-              🔗 ${t('copyLink')}
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div class="lobby-layout">
-        <div>
+        <div class="lobby-column">
           <div class="card">
             <h3 class="mb-md">👥 ${t('players')} (${state.players.length})</h3>
             <div class="player-list" id="player-list"></div>
           </div>
           <div id="lobby-actions"></div>
+          <div class="room-code-box">
+            <div>
+              <div class="room-code-header">
+                <div class="room-code-label">${t('roomCode')}</div>
+                <span class="lobby-expiry-badge" id="lobby-expiry-badge">⏱ 10:00</span>
+              </div>
+              <div class="room-code-display">
+                <input class="room-code-input" type="text" value="${state.roomId}" readonly tabindex="-1" />
+                <button class="btn btn-outline btn-sm" onclick="copyLink('${link}')">
+                  🔗 ${t('copyLink')}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="card" id="config-card">
           <h3 class="mb-md">⚙️ ${t('config')}</h3>
@@ -830,19 +874,33 @@ function startLobbyExpiryTimer() {
   if (state.lobbyExpiryTimer) clearInterval(state.lobbyExpiryTimer);
   if (!state.expiresAt || state.currentScreen !== 'lobby') return;
 
+  const LOBBY_TIMEOUT_SECONDS = 10 * 60; // 10 minutes
+
+  // Initial update - cap at max lobby timeout
+  const initialRemaining = Math.max(0, Math.floor((state.expiresAt - Date.now()) / 1000));
+  const cappedRemaining = Math.min(initialRemaining, LOBBY_TIMEOUT_SECONDS);
+  const badge = document.querySelector('.lobby-expiry-badge');
+  if (badge) {
+    const mins = Math.floor(cappedRemaining / 60);
+    const secs = cappedRemaining % 60;
+    badge.textContent = `⏱ ${mins}:${secs.toString().padStart(2, '0')}`;
+    badge.classList.toggle('urgent', cappedRemaining <= 60);
+  }
+
   state.lobbyExpiryTimer = setInterval(() => {
     if (state.currentScreen !== 'lobby' || !state.expiresAt) {
       clearInterval(state.lobbyExpiryTimer);
       state.lobbyExpiryTimer = null;
       return;
     }
-    const remaining = Math.max(0, Math.ceil((state.expiresAt - Date.now()) / 1000));
+    const remaining = Math.max(0, Math.floor((state.expiresAt - Date.now()) / 1000));
+    const capped = Math.min(remaining, LOBBY_TIMEOUT_SECONDS);
     const badge = document.querySelector('.lobby-expiry-badge');
     if (badge) {
-      const mins = Math.floor(remaining / 60);
-      const secs = remaining % 60;
+      const mins = Math.floor(capped / 60);
+      const secs = capped % 60;
       badge.textContent = `⏱ ${mins}:${secs.toString().padStart(2, '0')}`;
-      badge.classList.toggle('urgent', remaining <= 60);
+      badge.classList.toggle('urgent', capped <= 60);
     }
   }, 1000);
 }
@@ -878,6 +936,11 @@ function renderGame() {
         maxlength="30" />
     </div>`).join('');
 
+  const letterAnim = state.letterAnimActive ? `
+    <div class="letter-anim-overlay" id="letter-anim-overlay">
+      <div class="letter-anim-bounce">${state.currentLetter}</div>
+    </div>` : '';
+
   return `
     ${renderTopBar()}
     <div class="screen game-screen">
@@ -887,6 +950,8 @@ function renderGame() {
         </div>
         <div class="timer-display${state.timer <= 10 ? ' urgent' : ''}">${state.timer}</div>
       </div>
+
+      ${letterAnim}
 
       <div class="letter-display-wrap">
         <div class="letter-display">${state.currentLetter}</div>
@@ -1077,6 +1142,7 @@ function initRouting() {
 
 // ─── Init ─────────────────────────────────────────────────────
 function init() {
+  preloadSfx();
   initRouting();
   render();
 }
@@ -1101,6 +1167,7 @@ window.toggleVote = toggleVote;
 window.renderVoteCards = renderVoteCards;
 window.goToLanding = goToLanding;
 window.updateStopButton = updateStopButton;
+window.toggleSfxMute = toggleSfxMute;
 
 // Kick off
 document.addEventListener('DOMContentLoaded', init);

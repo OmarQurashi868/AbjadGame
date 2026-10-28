@@ -98,6 +98,12 @@ body.lang-en { font-family: var(--font-en); }
   user-select: none;
 }
 
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .lang-toggle {
   background: var(--surface);
   border: 1px solid var(--border-light);
@@ -110,6 +116,12 @@ body.lang-en { font-family: var(--font-en); }
   transition: all var(--transition);
 }
 .lang-toggle:hover { background: var(--surface2); }
+
+.sfx-toggle {
+  padding: 0.4rem 0.7rem;
+  font-size: 1rem;
+}
+.sfx-toggle:hover { background: var(--surface2); }
 
 /* ---------- Screen Wrapper ---------- */
 .screen {
@@ -453,16 +465,16 @@ h3 { font-size: 1.25rem; font-weight: 600; }
 
 /* ---------- Player List ---------- */
 .player-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .player-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.85rem 1rem;
+  padding: 0.75rem 1rem;
   display: flex;
   align-items: center;
   gap: 0.65rem;
@@ -539,13 +551,29 @@ h3 { font-size: 1.25rem; font-weight: 600; }
 /* ---------- Lobby Split ---------- */
 .lobby-layout {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 1fr 380px;
   gap: 1.5rem;
   align-items: start;
 }
 
-@media (max-width: 760px) {
+.lobby-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.lobby-column .card {
+  flex-shrink: 0;
+}
+
+#config-card {
+  position: sticky;
+  top: 1rem;
+}
+
+@media (max-width: 820px) {
   .lobby-layout { grid-template-columns: 1fr; }
+  #config-card { position: static; }
 }
 
 /* ---------- Game Screen ---------- */
@@ -616,6 +644,61 @@ h3 { font-size: 1.25rem; font-weight: 600; }
 @keyframes letterPulse {
   0%, 100% { box-shadow: 0 0 40px rgba(109,40,217,0.5), var(--shadow); transform: scale(1); }
   50%       { box-shadow: 0 0 80px rgba(109,40,217,0.8), 0 0 120px rgba(245,158,11,0.2), var(--shadow); transform: scale(1.04); }
+}
+
+/* Letter Animation on Round Start */
+.letter-anim-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 50;
+  background: transparent;
+}
+
+.letter-anim-bounce {
+  font-size: 8rem;
+  font-weight: 900;
+  color: var(--accent);
+  text-shadow: 0 0 40px rgba(245,158,11,0.8), 0 0 80px rgba(109,40,217,0.6);
+  animation: letterAnimBounce 1.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  user-select: none;
+}
+
+@keyframes letterAnimBounce {
+  0% {
+    transform: scale(0.1) translateY(100px);
+    opacity: 0;
+  }
+  20% {
+    transform: scale(1.1) translateY(-20px);
+    opacity: 1;
+  }
+  40% {
+    transform: scale(0.95) translateY(10px);
+  }
+  60% {
+    transform: scale(1.02) translateY(-5px);
+  }
+  80% {
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Fade out after bounce */
+.letter-anim-overlay.fade-out .letter-anim-bounce {
+  animation: letterAnimFadeOut 0.5s ease forwards;
+}
+
+@keyframes letterAnimFadeOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.5); }
 }
 
 /* Answer Fields */
