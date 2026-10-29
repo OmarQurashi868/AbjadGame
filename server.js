@@ -28,7 +28,7 @@ const ARABIC_LETTERS = [
 ];
 
 const DEFAULT_CATEGORIES = [
-  'ولد','بنت','حيوان','جماد','نبات','بلاد','وجبة','مشهور','لعبة','وسائط'
+  'ولد','بنت','حيوان','جماد','نبات','بلاد','وجبة','مشهور','ترفيه','تطبيقات'
 ];
 
 const DEFAULT_CONFIG = {
@@ -250,6 +250,14 @@ function startGame(ws) {
     sendToPlayer(ws, { type: 'error', message: 'يجب أن يكون هناك لاعبان على الأقل' });
     return;
   }
+  if (!room.config.categories || room.config.categories.length === 0) {
+    sendToPlayer(ws, { type: 'error', message: 'يجب إضافة فئة واحدة على الأقل' });
+    return;
+  }
+  if (room.config.categories.length > 16) {
+    sendToPlayer(ws, { type: 'error', message: 'الحد الأقصى للفئات هو 16' });
+    return;
+  }
   if (room.state !== 'lobby') return;
 
   clearLobbyTimer(room);
@@ -364,12 +372,16 @@ function sendCategoryVoting(room) {
 
   // Track who needs to vote
   room.pendingVotes = new Set(activePlayers.map(p => p.id));
+  const totalVoters = activePlayers.length;
+  const submittedCount = 0;
 
   broadcast(room, {
     type: 'votingPhase',
     categoryIndex: catIndex,
     category,
-    answers: answersArr
+    answers: answersArr,
+    totalVoters,
+    submittedCount
   });
 
   // Voting timer: 30 seconds per category
@@ -406,6 +418,15 @@ function submitVotes(ws, categoryIndex, votes) {
   room.votes[categoryIndex][clientInfo.playerId] = votes;
   room.pendingVotes.delete(clientInfo.playerId);
 
+  // Broadcast updated vote counts
+  const totalVoters = room.players.filter(p => p.connected).length;
+  const submittedCount = totalVoters - room.pendingVotes.size;
+  broadcast(room, {
+    type: 'votesSubmittedUpdate',
+    submittedCount,
+    totalVoters
+  });
+
   if (room.pendingVotes.size === 0) {
     if (room.votingTimerHandle) {
       clearInterval(room.votingTimerHandle);
@@ -419,7 +440,7 @@ function resolveVoting(room, catIndex) {
   if (room.state !== 'voting') return;
   const category = room.config.categories[catIndex];
 
-  // Build final validity from votes: majority rules; if no votes, use pre-validation
+  // Build final validity from votes: if half or more of voters agree valid, it's valid
   const playerAnswers = room.players.filter(p => p.connected).map(p => {
     const ans = (room.answers[p.id] || {})[category] || '';
     const preValid = isValidAnswer(ans, room.currentLetter);
@@ -427,8 +448,10 @@ function resolveVoting(room, catIndex) {
   });
 
   const results = {};
+  const validAnswers = {}; // playerId -> normalizedAnswer
+
+  // First pass: determine final validity
   playerAnswers.forEach(({ playerId, answer, preValid }) => {
-    // Count votes against this player
     let validVotes = 0, invalidVotes = 0;
     Object.values(room.votes[catIndex] || {}).forEach(voterVotes => {
       if (voterVotes[playerId] === false) {
@@ -438,12 +461,39 @@ function resolveVoting(room, catIndex) {
       }
     });
 
+    const totalVotes = validVotes + invalidVotes;
     let finalValid = preValid;
-    if (invalidVotes + validVotes > 0) {
-      finalValid = invalidVotes > validVotes ? false : preValid;
+    if (totalVotes > 0) {
+      finalValid = validVotes >= totalVotes / 2;
     }
 
     results[playerId] = { answer, valid: finalValid };
+
+    if (finalValid && answer.trim()) {
+      validAnswers[playerId] = deepNormalizeForGrouping(answer);
+    }
+  });
+
+  // Second pass: group by normalized answer to find shared/unique
+  const answerGroups = {};
+  Object.entries(validAnswers).forEach(([pid, norm]) => {
+    if (!answerGroups[norm]) answerGroups[norm] = [];
+    answerGroups[norm].push(pid);
+  });
+
+  // Assign per-category scores
+  Object.entries(answerGroups).forEach(([norm, pids]) => {
+    const pts = pids.length === 1 ? 10 : 5;
+    pids.forEach(pid => {
+      results[pid].score = pts;
+    });
+  });
+
+  // Invalid answers get 0
+  playerAnswers.forEach(({ playerId, answer }) => {
+    if (!results[playerId].valid || !answer.trim()) {
+      results[playerId].score = 0;
+    }
   });
 
   broadcast(room, { type: 'votingResult', categoryIndex: catIndex, results });
@@ -462,7 +512,30 @@ function normalizeForCompare(str) {
   return str.trim()
     .replace(/[ًٌٍَُِّْ]/g, '')
     .replace(/[أإآ]/g, 'ا')
+    .replace(/[ى]/g, 'ي')
     .replace(/ة/g, 'ه')
+    .toLowerCase();
+}
+
+// Normalize word endings for fuzzy matching: replace variant ending letters
+// (ا ي ى ة ه) with canonical forms so "مدني" and "مدنى" match
+function normalizeWordEndings(str) {
+  if (!str) return '';
+  return str
+    .replace(/[ى]/g, 'ي')
+    .replace(/[ةه]/g, 'ه')
+    .replace(/[ا]$/, 'ا'); // keep alif at end as-is
+}
+
+// Deep normalize for grouping: handles multi-word submissions
+function deepNormalizeForGrouping(str) {
+  if (!str) return '';
+  return str.trim()
+    .replace(/[ًٌٍَُِّْ]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .split(/\s+/)
+    .map(w => normalizeWordEndings(w))
+    .join(' ')
     .toLowerCase();
 }
 
@@ -490,7 +563,7 @@ function calculateScores(room) {
       if (voteCount > 0 && invalidCount > voteCount / 2) valid = false;
 
       if (valid && ans.trim()) {
-        validAnswers[p.id] = normalizeForCompare(ans);
+        validAnswers[p.id] = deepNormalizeForGrouping(ans);
       }
     });
 

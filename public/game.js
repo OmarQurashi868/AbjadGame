@@ -129,7 +129,7 @@ const ARABIC_LETTERS = [
 ];
 
 const DEFAULT_CATEGORIES = [
-  'ولد','بنت','حيوان','جماد','نبات','بلاد','وجبة','مشهور','لعبة','وسائط'
+  'ولد','بنت','حيوان','جماد','نبات','بلاد','وجبة','مشهور','ترفيه','تطبيقات'
 ];
 
 const PLAYER_COLORS = [
@@ -354,20 +354,21 @@ function handleServerMessage(msg) {
       state.letterAnimFadeIn = false;
       if (state.lobbyExpiryTimer) { clearInterval(state.lobbyExpiryTimer); state.lobbyExpiryTimer = null; }
       state.categories.forEach(c => { state.answers[c] = ''; });
-      startClientTimer(msg.timerSeconds);
       state.currentScreen = 'game';
       history.pushState({ screen: 'game' }, '', location.pathname);
       render();
       playSfx('xylophone_mystery');
       // Handle letter animation: show bounce, then fade in the static letter
+      // Timer starts AFTER letter animation completes (~2300ms total)
       setTimeout(() => {
         const overlay = document.getElementById('letter-anim-overlay');
         if (overlay) {
           overlay.classList.add('fade-out');
-          // After overlay fades, trigger fade-in of static letter
+          // After overlay fades, trigger fade-in of static letter AND start timer
           setTimeout(() => {
             state.letterAnimActive = false;
             state.letterAnimFadeIn = true;
+            startClientTimer(msg.timerSeconds);
             // Update just the letter display without full re-render
             const letterEl = document.querySelector('.letter-display');
             if (letterEl) {
@@ -377,6 +378,7 @@ function handleServerMessage(msg) {
         } else {
           state.letterAnimActive = false;
           state.letterAnimFadeIn = true;
+          startClientTimer(msg.timerSeconds);
         }
       }, 1800);
       break;
@@ -406,6 +408,8 @@ function handleServerMessage(msg) {
       state.votingTotalCategories = state.categories.length;
       state.localVotes = {};
       state.votesSubmitted = false;
+      state.votingTotalVoters = msg.totalVoters || 0;
+      state.votingSubmittedCount = msg.submittedCount || 0;
       // Initialize local votes from prevalidation
       msg.answers.forEach(a => { state.localVotes[a.playerId] = a.valid; });
       startClientTimer(30);
@@ -413,10 +417,18 @@ function handleServerMessage(msg) {
       render();
       break;
 
+    case 'votesSubmittedUpdate':
+      state.votingSubmittedCount = msg.submittedCount;
+      state.votingTotalVoters = msg.totalVoters;
+      updateVoteSubmitCounter();
+      break;
+
     case 'votingResult':
-      // Show score animations for each player
+      // Show score animations for each player with correct scores
       if (msg.results) {
         showScoreAnimations(msg.results);
+        // Update vote cards with final verdict colors
+        applyFinalVerdictColors(msg.results);
       }
       // Reset votesSubmitted for next category
       state.votesSubmitted = false;
@@ -430,6 +442,8 @@ function handleServerMessage(msg) {
       state.totalRounds = msg.totalRounds;
       state.currentScreen = 'roundEnd';
       render();
+      // Show score animations with correct scores (10 for unique, 5 for duplicate, 0 for invalid)
+      showScoreAnimations(msg.scores);
       break;
 
     case 'gameEnd':
@@ -575,7 +589,7 @@ function playerInitial(name) {
 function renderTopBar() {
   return `
     <div class="top-bar">
-      <span class="logo" onclick="goToLanding()" style="cursor:pointer">${t('title')}</span>
+      <a class="logo" href="/" onclick="event.preventDefault(); goToLanding()">${t('title')}</a>
       <div class="top-bar-actions">
         <button class="lang-toggle" onclick="toggleLang()">${t('langToggle')}</button>
         <button class="lang-toggle sfx-toggle" onclick="toggleSfxMute()" title="${sfxMuted ? 'Enable sound effects' : 'Disable sound effects'}">
@@ -597,6 +611,14 @@ function renderPlayerList() {
       <span class="player-name">${escHtml(p.username)}</span>
       ${p.isHost ? `<span class="host-badge">${t('host')}</span>` : ''}
     </div>`).join('');
+  updatePlayerCount();
+}
+
+function updatePlayerCount() {
+  const countEl = document.querySelector('.player-count');
+  if (countEl) {
+    countEl.textContent = `(${state.players.length})`;
+  }
 }
 
 function renderLobbyActions() {
@@ -605,10 +627,10 @@ function renderLobbyActions() {
   const count = state.players.filter(p => p.connected !== false).length;
   if (state.isHost) {
     container.innerHTML = `
+      ${count < 2 ? `<p class="text-muted text-sm text-center mb-sm">${t('needTwoPlayers')}</p>` : ''}
       <button class="btn btn-accent btn-lg w-full" onclick="doStartGame()" ${count < 2 ? 'disabled' : ''}>
         🎮 ${t('startGame')}
-      </button>
-      ${count < 2 ? `<p class="text-muted text-sm text-center mt-sm">${t('needTwoPlayers')}</p>` : ''}`;
+      </button>`;
   } else {
     container.innerHTML = `<p class="text-muted text-center">${t('waitingForHost')}</p>`;
   }
@@ -697,13 +719,20 @@ function addCategory() {
   const val = inp.value.trim();
   if (!val) return;
   if (state.config.categories.includes(val)) { showToast('الفئة موجودة بالفعل', 'error'); return; }
+  if (state.config.categories.length >= 16) { showToast('الحد الأقصى للفئات هو 16', 'error'); return; }
   const cats = [...state.config.categories, val];
   wsSend({ type: 'updateConfig', ...state.config, categories: cats });
   inp.value = '';
 }
 
 // ─── Game actions ─────────────────────────────────────────────
-function doStartGame() { wsSend({ type: 'startGame' }); }
+function doStartGame() {
+  if (!state.config.categories || state.config.categories.length === 0) {
+    showToast('يجب إضافة فئة واحدة على الأقل', 'error');
+    return;
+  }
+  wsSend({ type: 'startGame' });
+}
 
 // Client-side mirror of server isValidAnswer
 function isValidAnswerClient(answer, letter) {
@@ -782,6 +811,19 @@ function renderVoteCards() {
         <div class="vote-status-icon">${icon}</div>
       </div>`;
   }).join('');
+  updateVoteSubmitCounter();
+}
+
+function updateVoteSubmitCounter() {
+  const counterEl = document.getElementById('vote-submit-counter');
+  if (!counterEl) return;
+  const totalVoters = state.votingTotalVoters || 0;
+  const submittedCount = state.votingSubmittedCount || 0;
+  if (totalVoters > 0) {
+    counterEl.textContent = `(${submittedCount}/${totalVoters})`;
+  } else {
+    counterEl.textContent = '';
+  }
 }
 
 function showScoreAnimations(results) {
@@ -792,9 +834,10 @@ function showScoreAnimations(results) {
     const card = container.querySelector(`[data-player-id="${playerId}"]`);
     if (!card) return;
 
-    const isValid = data.valid === true;
-    const score = isValid ? 10 : 5;
-    const color = isValid ? 'var(--valid)' : 'var(--accent)';
+    const score = data.score ?? 0;
+    if (score === 0) return; // No popup for 0 points
+
+    const color = score === 10 ? 'var(--valid)' : 'var(--accent)';
 
     const popup = document.createElement('div');
     popup.className = 'score-popup';
@@ -802,7 +845,32 @@ function showScoreAnimations(results) {
     popup.style.color = color;
     card.appendChild(popup);
 
-    setTimeout(() => popup.remove(), 1000);
+    setTimeout(() => popup.remove(), 2000);
+  });
+}
+
+function applyFinalVerdictColors(results) {
+  const container = document.getElementById('vote-cards-container');
+  if (!container) return;
+
+  Object.entries(results).forEach(([playerId, data]) => {
+    const card = container.querySelector(`[data-player-id="${playerId}"]`);
+    if (!card) return;
+
+    const score = data.score ?? 0;
+    // Remove existing verdict classes
+    card.classList.remove('verdict-unique', 'verdict-duplicate', 'verdict-rejected');
+
+    if (score === 10) {
+      // Unique accepted - green
+      card.classList.add('verdict-unique');
+    } else if (score === 5) {
+      // Duplicated accepted - yellow
+      card.classList.add('verdict-duplicate');
+    } else if (score === 0) {
+      // Rejected - red
+      card.classList.add('verdict-rejected');
+    }
   });
 }
 
@@ -909,7 +977,7 @@ function renderLobby() {
       <div class="lobby-layout">
         <div class="lobby-column">
           <div class="card">
-            <h3 class="mb-md">👥 ${t('players')} (${state.players.length})</h3>
+            <h3 class="mb-md">👥 ${t('players')} <span class="player-count">(${state.players.length})</span></h3>
             <div class="player-list" id="player-list"></div>
           </div>
           <div id="lobby-actions"></div>
@@ -997,10 +1065,7 @@ function copyLink(link) {
 function renderGame() {
   const fields = state.categories.map(cat => `
     <div class="answer-field-wrap">
-      <div class="answer-field-label">
-        <span class="letter-hint">${state.currentLetter}</span>
-        ${escHtml(cat)}
-      </div>
+      <div class="answer-field-label">${escHtml(cat)}</div>
       <input class="answer-input" type="text"
         placeholder="${state.currentLetter}..."
         value="${escHtml(state.answers[cat] || '')}"
@@ -1048,6 +1113,7 @@ function renderVoting() {
       <div class="voting-header">
         <div class="text-muted text-sm mb-sm">${t('votingFor')}</div>
         <div class="vote-category-name">${escHtml(state.votingCategory)}</div>
+        <div class="round-progress-badge">${t('round')} ${state.round} ${t('of')} ${state.totalRounds}</div>
         <div class="vote-progress">
           ${state.currentVotingCategory + 1} / ${state.votingTotalCategories || state.categories.length}
         </div>
@@ -1062,6 +1128,7 @@ function renderVoting() {
       <div class="flex justify-center mt-md">
         <button class="btn btn-primary btn-lg" id="submit-votes-btn" onclick="doSubmitVotes()">
           ✓ ${t('submitVotes')}
+          <span class="vote-submit-counter" id="vote-submit-counter"></span>
         </button>
       </div>
     </div>`;
@@ -1069,15 +1136,20 @@ function renderVoting() {
 
 // ─── Screen: Round End ────────────────────────────────────────
 function renderRoundEnd() {
-  const players = state.players;
+  const players = [...state.players].sort((a, b) => {
+    const scoreA = state.roundScores?.[a.id]?.score ?? 0;
+    const scoreB = state.roundScores?.[b.id]?.score ?? 0;
+    return scoreB - scoreA;
+  });
   const rows = players.map((p, i) => {
     const rs = state.roundScores?.[p.id];
     const ts = state.totalScores?.[p.id];
+    const originalIdx = state.players.findIndex(pl => pl.id === p.id);
     return `
       <tr>
         <td>
           <div class="flex items-center gap-sm">
-            <div class="player-avatar" style="background:${playerColor(i)};width:28px;height:28px;font-size:0.8rem">
+            <div class="player-avatar" style="background:${playerColor(originalIdx)};width:28px;height:28px;font-size:0.8rem">
               ${playerInitial(p.username)}
             </div>
             ${escHtml(p.username)}
@@ -1092,7 +1164,7 @@ function renderRoundEnd() {
     ${renderTopBar()}
     <div class="screen">
       <div class="card text-center mb-md">
-        <h2 class="title-gradient mb-sm">🏅 ${t('roundResults')}</h2>
+        <h2 class="mb-sm"><span class="emoji-inline">🏅</span> <span class="title-gradient">${t('roundResults')}</span></h2>
         <p class="text-muted">${t('round')} ${state.round} ${t('of')} ${state.totalRounds}</p>
       </div>
       <div class="card">
