@@ -368,6 +368,36 @@ function sendCategoryVoting(room) {
     return { playerId: p.id, username: p.username, answer: ans, valid };
   });
 
+  // Check if all answers are empty - if so, auto-advance after 3 seconds
+  const allEmpty = answersArr.every(a => !a.answer || !a.answer.trim());
+  if (allEmpty) {
+    broadcast(room, {
+      type: 'votingPhase',
+      categoryIndex: catIndex,
+      category,
+      answers: answersArr,
+      totalVoters: 0,
+      submittedCount: 0,
+      autoAdvance: true
+    });
+    setTimeout(() => {
+      // Send empty voting result to advance
+      const emptyResults = {};
+      activePlayers.forEach(p => {
+        emptyResults[p.id] = { answer: '', valid: false, score: 0 };
+      });
+      broadcast(room, { type: 'votingResult', categoryIndex: catIndex, results: emptyResults });
+      // Advance to next category
+      room.currentCategoryIndex++;
+      if (room.currentCategoryIndex < room.config.categories.length) {
+        setTimeout(() => sendCategoryVoting(room), 1500);
+      } else {
+        setTimeout(() => calculateScores(room), 1500);
+      }
+    }, 3000);
+    return;
+  }
+
   room.votes[catIndex] = {}; // voterId -> { playerId -> bool }
 
   // Track who needs to vote
@@ -519,11 +549,12 @@ function normalizeForCompare(str) {
 
 // Normalize word endings for fuzzy matching: replace variant ending letters
 // (ا ي ى ة ه) with canonical forms so "مدني" and "مدنى" match
+// Also strip trailing ة/ه so "بط" matches "بطة"
 function normalizeWordEndings(str) {
   if (!str) return '';
   return str
     .replace(/[ى]/g, 'ي')
-    .replace(/[ةه]/g, 'ه')
+    .replace(/[ةه]+$/, '') // strip trailing ة and ه
     .replace(/[ا]$/, 'ا'); // keep alif at end as-is
 }
 

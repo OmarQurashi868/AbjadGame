@@ -410,6 +410,7 @@ function handleServerMessage(msg) {
       state.votesSubmitted = false;
       state.votingTotalVoters = msg.totalVoters || 0;
       state.votingSubmittedCount = msg.submittedCount || 0;
+      state.votingAutoAdvance = msg.autoAdvance || false;
       // Initialize local votes from prevalidation
       msg.answers.forEach(a => { state.localVotes[a.playerId] = a.valid; });
       startClientTimer(30);
@@ -1107,6 +1108,7 @@ function renderGame() {
 
 // ─── Screen: Voting ───────────────────────────────────────────
 function renderVoting() {
+  const autoAdvance = state.votingAutoAdvance;
   return `
     ${renderTopBar()}
     <div class="screen">
@@ -1125,12 +1127,16 @@ function renderVoting() {
 
       <div class="vote-cards" id="vote-cards-container"></div>
 
+      ${autoAdvance ? `
+      <div class="text-center text-muted mt-md">
+        لا إجابات — جاري الانتقال التلقائي...
+      </div>` : `
       <div class="flex justify-center mt-md">
         <button class="btn btn-primary btn-lg" id="submit-votes-btn" onclick="doSubmitVotes()">
           ✓ ${t('submitVotes')}
           <span class="vote-submit-counter" id="vote-submit-counter"></span>
         </button>
-      </div>
+      </div>`}
     </div>`;
 }
 
